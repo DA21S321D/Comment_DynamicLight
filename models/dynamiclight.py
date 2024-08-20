@@ -17,47 +17,258 @@ import copy, os
 
 
 class DynamicLightAgent(NetworkAgent):
-    
+
     def build_network(self):
-        ins0 = Input(shape=(self.max_lane, self.num_feat1), name="input_total_features") 
+        # 输入层1：表示总特征的输入，形状为 (self.max_lane = 16, self.num_feat1 = 6)
+        ins0 = Input(shape=(self.max_lane, self.num_feat1), name="input_total_features") #
+        # 输入层2：表示当前相位的输入，形状为 (self.max_lane = 16,)
         ins1 = Input(shape=(self.max_lane,), name="input_cur_phase")
+
+        # 输入层3：表示用于选择相位的矩阵，形状为 (1, self.num_phases = 4)
         ins2 = Input(shape=(1, self.num_phases))
+
+        # 定义嵌入层和输出维度，uni_dim 和 dims2 分别为嵌入维度和隐藏层维度
         uni_dim, dims2 = 4, 16
+
+        # 嵌入层：对输入的相位（ins1）进行嵌入，并使用 sigmoid 激活函数
+        # 将相位索引转换为嵌入表示，输出形状为 (self.max_lane = 16, uni_dim = 4)
         phase_emb = Activation('sigmoid')(Embedding(2, uni_dim, input_length=self.max_lane)(ins1))
+
+        # 将输入的特征 ins0 在最后一个维度上拆分为 num_feat1 个子特征
+        #ins0 = <KerasTensor: shape=(None, 16, 6) dtype=float32 (created by layer 'input_total_features')>
+        #feat_list = {list:6}[<KerasTensor: shape=(None, 16, 1) dtype=float32 (created by layer 'tf.split')>, <KerasTensor: shape=(None, 16, 1) dtype=float32 (created by layer 'tf.split')>, <KerasTensor: shape=(None, 16, 1) dtype=float32 (created by layer 'tf.split')>, <KerasTensor: shape=(None, 16, 1) dtype=float32 (created by layer 'tf.split')>, <KerasTensor: shape=(None, 16, 1) dtype=float32 (created by layer 'tf.split')>, <KerasTensor: shape=(None, 16, 1) dtype=float32 (created by layer 'tf.split')>]
         feat_list = tf.split(ins0, self.num_feat1, axis=2)
+
+        # 对每个子特征进行嵌入，并使用 sigmoid 激活函数
+        # 对应特征向量嵌入的输出是 (self.max_lane, uni_dim)
         feat_embs = [Dense(uni_dim, activation='sigmoid')(feat_list[i]) for i in range(self.num_feat1)]
-        feat_embs.append(phase_emb)    
+
+        # 将相位嵌入添加到特征嵌入列表中
+        # 👇feat_embs = {list:7}[<KerasTensor: shape=(None, 16, 4) dtype=float32 (created by layer 'dense')>, <KerasTensor: shape=(None, 16, 4) dtype=float32 (created by layer 'dense_1')>, <KerasTensor: shape=(None, 16, 4) dtype=float32 (created by layer 'dense_2')>, <KerasTensor: shape=(None, 16, 4) dtype=float32 (created by layer 'dense_3')>, <KerasTensor: shape=(None, 16, 4) dtype=float32 (created by layer 'dense_4')>, <KerasTensor: shape=(None, 16, 4) dtype=float32 (created by layer 'dense_5')>, <KerasTensor: shape=(None, 16, 4) dtype=float32 (created by layer 'activation')>]
+        feat_embs.append(phase_emb)
+
+        # 将所有特征嵌入在最后一个维度上连接起来，形成新的特征表示
+        # 👇<KerasTensor: shape=(None, 16, 28) dtype=float32 (created by layer 'tf.concat')>
         feats = tf.concat(feat_embs, axis=2)
+
+        # 对连接后的特征表示应用全连接层，并使用 ReLU 激活函数进行非线性变换
+        # 👇<KerasTensor: shape=(None, 16, 16) dtype=float32 (created by layer 'dense_6')>
         feats = Dense(dims2, activation="relu")(feats)
+
+        # 将结果特征在第一个维度上拆分为 self.max_lane 个 lane 特征
+        # 👇{list:16}[<KerasTensor: shape=(None, 1, 16) dtype=float32 (created by layer 'tf.split_1')>, <KerasTensor: shape=(None, 1, 16) dtype=float32 (created by layer 'tf.split_1')>, <KerasTensor: shape=(None, 1, 16) dtype=float32 (created by layer 'tf.split_1')>, <KerasTensor: shape=(None, 1, 16) dtype=float32 (created by layer 'tf.split_1')>, <KerasTensor: shape=(None, 1, 16) dtype=float32 (created by layer 'tf.split_1')>, <KerasTensor: shape=(None, 1, 16) dtype=float32 (created by layer 'tf.split_1')>, <KerasTensor: shape=(None, 1, 16) dtype=float32 (created by layer 'tf.split_1')>, <KerasTensor: shape=(None, 1, 16) dtype=float32 (created by layer 'tf.split_1')>, <KerasTensor: shape=(None, 1, 16) dtype=float32 (created by layer 'tf.split_1')>, <KerasTensor: shape=(None, 1, 16) dtype=float32 (created by layer 'tf.split_1')>, <KerasTensor: shape=(None, 1, 16) dtype=float32 (created by layer 'tf.split_1')>, <KerasTensor: shape=(None, 1, 16) dtype=float32 (created by layer 'tf.split_1')>, <KerasTensor: shape=(None, 1, 16) dtype=float32 (created by layer 'tf.split_1')>, <KerasTensor: shape=(None, 1, 16) dtype=float32 (created by layer 'tf.split_1')>, <KerasTensor: shape=(None, 1, 16) dtype=float32 (created by layer 'tf.split_1')>, <KerasTensor: shape=(None, 1, 16) dtype=float32 (created by layer 'tf.split_1')>]
         lane_feats = tf.split(feats, self.max_lane, axis=1)
+
+        # 存储每个相位的特征
         phase_feats = []
+
+        # 定义多头注意力机制的层，参数 4 是头的数量，16 是每个头的输出维度，attention_axes 指定注意力操作的轴
         MHA1 = MultiHeadAttention(4, 16, attention_axes=1)
+
+        # 使用 Lambda 层创建一个计算平均值的操作，计算沿第一个维度的平均值
         Mean1 = Lambda(lambda x: K.mean(x, axis=1, keepdims=True))
+
+        # 遍历每个相位，将 lane 特征按 phase_map 中定义的映射进行组合并生成相位特征
         for i in range(self.num_phases):
+            # 选择属于当前相位 i 的所有 lane 特征，并在最后一个维度上连接
+            # 👇<KerasTensor: shape=(None, 2, 16) dtype=float32 (created by layer 'tf.concat_1')>
             tmp_feat_1 = tf.concat([lane_feats[idx] for idx in self.phase_map[i]], axis=1)
+
+            # 对连接后的 lane 特征应用多头注意力机制
+            # 👇<KerasTensor: shape=(None, 2, 16) dtype=float32 (created by layer 'multi_head_attention')>
             tmp_feat_2 = MHA1(tmp_feat_1, tmp_feat_1)
+
+            # 对注意力输出的特征进行平均
+            # 👇<KerasTensor: shape=(None, 1, 16) dtype=float32 (created by layer 'lambda')>
             tmp_feat_3 = Mean1(tmp_feat_2)
+
+            # 将计算的相位特征添加到 phase_feats 列表中
+            # 👇{list:4}[<KerasTensor: shape=(None, 1, 16) dtype=float32 (created by layer 'lambda')>, <KerasTensor: shape=(None, 1, 16) dtype=float32 (created by layer 'lambda')>, <KerasTensor: shape=(None, 1, 16) dtype=float32 (created by layer 'lambda')>, <KerasTensor: shape=(None, 1, 16) dtype=float32 (created by layer 'lambda')>]
             phase_feats.append(tmp_feat_3)
+
+        # 将所有相位特征在最后一个维度上连接起来
+        # 👇<KerasTensor: shape=(None, 4, 16) dtype=float32 (created by layer 'tf.concat_5')>
         phase_feat_all = tf.concat(phase_feats, axis=1)
+
+        # 对相位特征进行多头注意力操作
+        #<KerasTensor: shape=(None, 4, 16) dtype=float32 (created by layer 'multi_head_attention_1')>
         att_encoding = MultiHeadAttention(4, 8, attention_axes=1)(phase_feat_all, phase_feat_all)
+
+        # 对注意力编码的特征应用两层全连接层，并使用 ReLU 激活函数
         hidden = Dense(20, activation="relu")(att_encoding)
         hidden = Dense(20, activation="relu")(hidden)
+        #hidden = <KerasTensor: shape=(None, 4, 20) dtype=float32 (created by layer 'dense_8')>
+
+        # 最终输出一个线性激活的特征，作为最终相位特征
+        #<KerasTensor: shape=(None, 4, 1) dtype=float32 (created by layer 'beformerge')>
         phase_feature_final = Dense(1, activation="linear", name="beformerge")(hidden)
+
+        # 将线性特征重新调整形状为 (4,) 作为评分输出（pscore）
+        #<KerasTensor: shape=(None, 4) dtype=float32 (created by layer 'reshape')>
         pscore = Reshape((4,))(phase_feature_final)
+
+        # 选择当前相位特征，通过 ins2 和相位特征矩阵相乘来选择特征
+        #<KerasTensor: shape=(None, 16) dtype=float32 (created by layer 'reshape_1')>
         selected_phase_feat = Lambda(lambda x: tf.matmul(x[0], x[1]))([ins2, phase_feat_all])
-        selected_phase_feat = Reshape((dims2, ))(selected_phase_feat)
+
+        # 将选择后的相位特征调整为 dims2 维度
+        #<KerasTensor: shape=(None, 16) dtype=float32 (created by layer 'reshape_1')>
+        selected_phase_feat = Reshape((dims2,))(selected_phase_feat)
+
+        # 对选择的特征应用两层全连接层，并使用 ReLU 激活函数
         hidden2 = Dense(20, activation="relu")(selected_phase_feat)
         hidden2 = Dense(20, activation="relu")(hidden2)
+        #hidden2 = <KerasTensor: shape=(None, 20) dtype=float32 (created by layer 'dense_10')>
+
+        # 调用 dueling_block 方法处理隐层输出，生成决策评分（dscore）
+        #<KerasTensor: shape=(None, 7) dtype=float32 (created by layer 'dueling_q_values')>
         dscore = self.dueling_block(hidden2)
 
-        #这里使用了keras模型对象，所以才会无法在代码中找到self.q_network.predict(****)中predict
+        # 创建 Keras 模型对象，指定输入层和输出层
+        # 这里使用了keras模型对象，所以才会无法在代码中找到self.q_network.predict(****)中predict
         network = Model(inputs=[ins0, ins1, ins2],
                         outputs=[pscore, dscore])
+
+        # 编译模型，指定优化器为 Adam，并设置学习率和损失函数
         network.compile(optimizer=Adam(lr=self.dic_agent_conf["LEARNING_RATE"], epsilon=1e-08),
                         loss=self.dic_agent_conf["LOSS_FUNCTION"])
+
+        # 打印模型结构摘要
         network.summary()
+        '''
+        Model: "model"
+        __________________________________________________________________________________________________
+         Layer (type)                   Output Shape         Param #     Connected to                     
+        ==================================================================================================
+         input_total_features (InputLay  [(None, 16, 6)]     0           []                               
+         er)                                                                                              
+                                                                                                          
+         input_cur_phase (InputLayer)   [(None, 16)]         0           []                               
+                                                                                                          
+         tf.split (TFOpLambda)          [(None, 16, 1),      0           ['input_total_features[0][0]']   
+                                         (None, 16, 1),                                                   
+                                         (None, 16, 1),                                                   
+                                         (None, 16, 1),                                                   
+                                         (None, 16, 1),                                                   
+                                         (None, 16, 1)]                                                   
+                                                                                                          
+         embedding (Embedding)          (None, 16, 4)        8           ['input_cur_phase[0][0]']        
+                                                                                                          
+         dense (Dense)                  (None, 16, 4)        8           ['tf.split[0][0]']               
+                                                                                                          
+         dense_1 (Dense)                (None, 16, 4)        8           ['tf.split[0][1]']               
+                                                                                                          
+         dense_2 (Dense)                (None, 16, 4)        8           ['tf.split[0][2]']               
+                                                                                                          
+         dense_3 (Dense)                (None, 16, 4)        8           ['tf.split[0][3]']               
+                                                                                                          
+         dense_4 (Dense)                (None, 16, 4)        8           ['tf.split[0][4]']               
+                                                                                                          
+         dense_5 (Dense)                (None, 16, 4)        8           ['tf.split[0][5]']               
+                                                                                                          
+         activation (Activation)        (None, 16, 4)        0           ['embedding[0][0]']              
+                                                                                                          
+         tf.concat (TFOpLambda)         (None, 16, 28)       0           ['dense[0][0]',                  
+                                                                          'dense_1[0][0]',                
+                                                                          'dense_2[0][0]',                
+                                                                          'dense_3[0][0]',                
+                                                                          'dense_4[0][0]',                
+                                                                          'dense_5[0][0]',                
+                                                                          'activation[0][0]']             
+                                                                                                          
+         dense_6 (Dense)                (None, 16, 16)       464         ['tf.concat[0][0]']              
+                                                                                                          
+         tf.split_1 (TFOpLambda)        [(None, 1, 16),      0           ['dense_6[0][0]']                
+                                         (None, 1, 16),                                                   
+                                         (None, 1, 16),                                                   
+                                         (None, 1, 16),                                                   
+                                         (None, 1, 16),                                                   
+                                         (None, 1, 16),                                                   
+                                         (None, 1, 16),                                                   
+                                         (None, 1, 16),                                                   
+                                         (None, 1, 16),                                                   
+                                         (None, 1, 16),                                                   
+                                         (None, 1, 16),                                                   
+                                         (None, 1, 16),                                                   
+                                         (None, 1, 16),                                                   
+                                         (None, 1, 16),                                                   
+                                         (None, 1, 16),                                                   
+                                         (None, 1, 16)]                                                   
+                                                                                                          
+         tf.concat_1 (TFOpLambda)       (None, 2, 16)        0           ['tf.split_1[0][1]',             
+                                                                          'tf.split_1[0][4]']             
+                                                                                                          
+         tf.concat_2 (TFOpLambda)       (None, 2, 16)        0           ['tf.split_1[0][7]',             
+                                                                          'tf.split_1[0][10]']            
+                                                                                                          
+         tf.concat_3 (TFOpLambda)       (None, 2, 16)        0           ['tf.split_1[0][0]',             
+                                                                          'tf.split_1[0][3]']             
+                                                                                                          
+         tf.concat_4 (TFOpLambda)       (None, 2, 16)        0           ['tf.split_1[0][6]',             
+                                                                          'tf.split_1[0][9]']             
+                                                                                                          
+         multi_head_attention (MultiHea  (None, 2, 16)       4304        ['tf.concat_1[0][0]',            
+         dAttention)                                                      'tf.concat_1[0][0]',            
+                                                                          'tf.concat_2[0][0]',            
+                                                                          'tf.concat_2[0][0]',            
+                                                                          'tf.concat_3[0][0]',            
+                                                                          'tf.concat_3[0][0]',            
+                                                                          'tf.concat_4[0][0]',            
+                                                                          'tf.concat_4[0][0]']            
+                                                                                                          
+         lambda (Lambda)                (None, 1, 16)        0           ['multi_head_attention[0][0]',   
+                                                                          'multi_head_attention[1][0]',   
+                                                                          'multi_head_attention[2][0]',   
+                                                                          'multi_head_attention[3][0]']   
+                                                                                                          
+         tf.concat_5 (TFOpLambda)       (None, 4, 16)        0           ['lambda[0][0]',                 
+                                                                          'lambda[1][0]',                 
+                                                                          'lambda[2][0]',                 
+                                                                          'lambda[3][0]']                 
+                                                                                                          
+         input_1 (InputLayer)           [(None, 1, 4)]       0           []                               
+                                                                                                          
+         lambda_1 (Lambda)              (None, 1, 16)        0           ['input_1[0][0]',                
+                                                                          'tf.concat_5[0][0]']            
+                                                                                                          
+         reshape_1 (Reshape)            (None, 16)           0           ['lambda_1[0][0]']               
+                                                                                                          
+         dense_9 (Dense)                (None, 20)           340         ['reshape_1[0][0]']              
+                                                                                                          
+         dense_10 (Dense)               (None, 20)           420         ['dense_9[0][0]']                
+                                                                                                          
+         multi_head_attention_1 (MultiH  (None, 4, 16)       2160        ['tf.concat_5[0][0]',            
+         eadAttention)                                                    'tf.concat_5[0][0]']            
+                                                                                                          
+         dense_a (Dense)                (None, 20)           420         ['dense_10[0][0]']               
+                                                                                                          
+         dense_7 (Dense)                (None, 4, 20)        340         ['multi_head_attention_1[0][0]'] 
+                                                                                                          
+         dueling_advantages (Dense)     (None, 7)            147         ['dense_a[0][0]']                
+                                                                                                          
+         dense_8 (Dense)                (None, 4, 20)        420         ['dense_7[0][0]']                
+                                                                                                          
+         dense_values (Dense)           (None, 20)           420         ['dense_10[0][0]']               
+                                                                                                          
+         lambda_2 (Lambda)              (None, 1)            0           ['dueling_advantages[0][0]']     
+                                                                                                          
+         beformerge (Dense)             (None, 4, 1)         21          ['dense_8[0][0]']                
+                                                                                                          
+         dueling_values (Dense)         (None, 1)            21          ['dense_values[0][0]']           
+                                                                                                          
+         subtract (Subtract)            (None, 7)            0           ['dueling_advantages[0][0]',     
+                                                                          'lambda_2[0][0]']               
+                                                                                                          
+         reshape (Reshape)              (None, 4)            0           ['beformerge[0][0]']             
+                                                                                                          
+         dueling_q_values (Add)         (None, 7)            0           ['dueling_values[0][0]',         
+                                                                          'subtract[0][0]']               
+                                                                                                          
+        ==================================================================================================
+        '''
+        # 返回构建的网络模型
         return network
-    
+
     def freze_layers(self):
         for layer in self.q_network.layers[0:21]:
             layer.trainable = False
