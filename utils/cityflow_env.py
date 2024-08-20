@@ -756,31 +756,46 @@ class CityFlowEnv:
         """
         # 补充action, 记录 action， cur_state
         before_action_state = self.get_state2(self.list_need_action)
+        print("action2","***",len(action2),"***", action2)
+        #for循环记录每个路口执行的两个动作和执行动作之前的state
         for i, inter_id in enumerate(self.list_need_action):
             tmp_duration = self.dic_traffic_env_conf["ACTION_DURATION"][action2[i]]
+
+            #list_action按秒记录当前路口选择的相位，并重复写 duration次
             self.list_action[inter_id].extend([action1[i]] * tmp_duration)
+
             # 记录 action， cur_state
             self.list_memory[inter_id][0] = action1[i]
             self.list_memory[inter_id][1] = action2[i]
             self.list_memory[inter_id][2] = before_action_state[i]
+
         # 寻找最短的action
         list_len = []
         for i in range(self.num_intersection):
             list_len.append(len(self.list_action[i]))
         min_duartion = min(list_len)
-        # 设置合适的 action
+
+
+        # 设置合适的 action list_action_in_sec 储存了每秒每个路口的执行相位，持续min_duration秒
         list_action_in_sec = [[] for _ in range(min_duartion)]
         for i in range(min_duartion):
             list_action_in_sec[i].extend([self.list_action[id][i] for id in range(self.num_intersection)])
+
+
         # 更新 记录的 list—action
         new_need = []
         for i in range(self.num_intersection):
+            #执行完min_duration之后把其他路口没执行完的动作取出来
             self.list_action[i] = self.list_action[i][min_duartion:]
+
+            #如果没有剩下的动作，说明这个路口需要新动作了
             if len(self.list_action[i]) == 0:
                 new_need.append(i)
+
         # 更新 list-need-action, 记录下一步需要 action的inter
         self.list_need_action = new_need
         step_start_time = time.time()
+
         for i in range(min_duartion):
             action_in_sec = list_action_in_sec[i]
             instant_time = self.get_current_time()
@@ -788,19 +803,28 @@ class CityFlowEnv:
             # state = self.get_state()
             if i == 0:
                 print("time: {0}".format(instant_time))
+
+            # 执行一次内层步骤操作（具体操作由 `_inner_step` 方法定义），应用当前时间步的所有路口动作
             self._inner_step(action_in_sec)
-            #  record every reward for average reward
+
+
+            #  record every reward for average reward 获取当前时间步的奖励
             tmp_reward = self.get_reward()
+
             for inter_id in range(self.num_intersection):
                 self.list_memory[inter_id][3].append(tmp_reward[inter_id])
 
+        #这部分获得已经执行完成的，动作持续时间的路口的 奖励，同时获得这些路口的下一个state
         final_reward = self.get_reward2(self.list_need_action)
         next_state = self.get_state2(self.list_need_action)
+
+
         self.log(after_action_state=next_state,
                  final_reward=final_reward,
                  )
         step_time = self.get_current_time()
         print("Step time: ", time.time() - step_start_time)
+        print("self.list_need_action",self.list_need_action)
         return next_state, step_time, self.list_need_action
 
     def select_phase_feature(self, state):
@@ -864,6 +888,7 @@ class CityFlowEnv:
 
     def get_state2(self, inter_idx):
         list_state = [self.list_intersection[idx].get_state(self.dic_traffic_env_conf["LIST_STATE_FEATURE"])
+                      #这个循环仅仅更新了，执行万完的路口的state
                       for idx in inter_idx]
         return list_state
 

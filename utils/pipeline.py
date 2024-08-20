@@ -50,6 +50,8 @@ def generator_wrapper(cnt_round, cnt_gen, dic_path, dic_agent_conf, dic_traffic_
                           dic_traffic_env_conf=dic_traffic_env_conf
                           )
     print("make generator")
+
+    #generate负责完成一局
     generator.generate()
     print("generator_wrapper end")
     return
@@ -83,10 +85,12 @@ class Pipeline:
         copy_conf_file(self.dic_path, self.dic_agent_conf, self.dic_traffic_env_conf)
         copy_cityflow_file(self.dic_path, self.dic_traffic_env_conf)
 
+    #这里多线程和第一层pipline_wrapper之前区分开
     def run(self, multi_process=False):
         f_time = open(os.path.join(self.dic_path["PATH_TO_WORK_DIRECTORY"], "running_time.csv"), "w")
         f_time.write("generator_time\tmaking_samples_time\tupdate_network_time\ttest_evaluation_times\tall_times\n")
         f_time.close()
+        #在纽约地图中，NUM_ROUNDS为80,也就是进行80局
         for cnt_round in range(self.dic_traffic_env_conf["NUM_ROUNDS"]):
             print("round %d starts" % cnt_round)
             round_start_time = time.time()
@@ -94,6 +98,7 @@ class Pipeline:
 
             print("==============  generator =============")
             generator_start_time = time.time()
+            # multi_process == False
             if multi_process:
                 print("-------------- use multi-process for generator -------------")
                 for cnt_gen in range(self.dic_traffic_env_conf["NUM_GENERATORS"]):
@@ -112,6 +117,8 @@ class Pipeline:
                     p.join()
                     print("generator %d finish join" % i)
                 print("end join")
+
+            #generator只设置了一个，并且是第二个封装，generator_wrapper，完成一局
             else:
                 for cnt_gen in range(self.dic_traffic_env_conf["NUM_GENERATORS"]):
                     generator_wrapper(cnt_round=cnt_round,
@@ -128,6 +135,8 @@ class Pipeline:
             train_round = os.path.join(self.dic_path["PATH_TO_WORK_DIRECTORY"], "train_round")
             if not os.path.exists(train_round):
                 os.makedirs(train_round)
+
+            #准备样本训训练
             cs = ConstructSample(path_to_samples=train_round, cnt_round=cnt_round,
                                  dic_traffic_env_conf=self.dic_traffic_env_conf)
             cs.prepare_samples_for_system()

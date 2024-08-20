@@ -49,6 +49,8 @@ class DynamicLightAgent(NetworkAgent):
         hidden2 = Dense(20, activation="relu")(selected_phase_feat)
         hidden2 = Dense(20, activation="relu")(hidden2)
         dscore = self.dueling_block(hidden2)
+
+        #这里使用了keras模型对象，所以才会无法在代码中找到self.q_network.predict(****)中predict
         network = Model(inputs=[ins0, ins1, ins2],
                         outputs=[pscore, dscore])
         network.compile(optimizer=Adam(lr=self.dic_agent_conf["LEARNING_RATE"], epsilon=1e-08),
@@ -96,8 +98,12 @@ class DynamicLightAgent(NetworkAgent):
         dic_state_feature_arrays = {}
         used_feature = copy.deepcopy(self.dic_traffic_env_conf["LIST_STATE_FEATURE_1"])
         cur_phase = []
+
+        #used_feature = ['phase_total', 'lane_queue_vehicle_in', 'lane_run_in_part', 'num_in_deg']
         for feature_name in used_feature:
             dic_state_feature_arrays[feature_name] = []
+
+
         for s in states:
             for feature_name in used_feature:
                 if feature_name == "phase_total":
@@ -105,22 +111,38 @@ class DynamicLightAgent(NetworkAgent):
                 else:
                     dic_state_feature_arrays[feature_name].append(s[feature_name])
         used_feature.remove("phase_total")
+
+        #剩下的3个特征连接起来'lane_queue_vehicle_in', 'lane_run_in_part', 'num_in_deg'
         state_input = [np.array(dic_state_feature_arrays[feature_name]).reshape(len(states), self.max_lane, -1) for feature_name in
                        used_feature]
         state_input = np.concatenate(state_input, axis=-1)
-        
-        # phase action 
+
+
+        # phase action  通过网络预测动作
         tmp_p, _ = self.q_network.predict([state_input, np.array(cur_phase), np.random.rand(len(states),1, 4)])
+
+        #SROUND之前都是随机选择 p action， tmp_p返回的是（196,4）
         if self.cnt_round < self.dic_agent_conf["SROUND"]:
             paction = self.epsilon_choice_one(tmp_p)
         else:
             paction = np.argmax(tmp_p, axis=1)
+
+
         # duration action
-        phase_idx =  np.array(paction).reshape(len(paction), 1, 1)
-        phase_matrix = self.phase_index2matrix(phase_idx)
+        #将动作调整一下维度
+        phase_idx =  np.array(paction).reshape(len(paction), 1, 1)#维度(196, 1, 1)
+        phase_matrix = self.phase_index2matrix(phase_idx)#维度(196, 1, 4)，
+
+        #使用选择的相位来和一些特征来决定持续时间 state_input 维度(196, 16, 6)
         _, tmp_d = self.q_network.predict([state_input, np.array(cur_phase), phase_matrix])
         if self.cnt_round < self.dic_agent_conf["SROUND"]:
-            daction = [1] * len(states)
+
+            #注意：这里80回合之内都是固定的 duration，所以为了方便理解逻辑我把这里注释改掉了
+            # daction = [1] * len(states)
+            daction = np.argmax(tmp_d, axis=1)
+
+
+        #这里进入了SROUND2回合后，网络输出的维度会变化，一开始是196,后来30 42 等数字，未查明是故意设计还是错误
         elif self.cnt_round < self.dic_agent_conf["SROUND2"]:
             daction = self.epsilon_choice_two(tmp_d)
         else:

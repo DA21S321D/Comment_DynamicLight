@@ -39,19 +39,28 @@ class Generator:
 
     def generate(self):
         reset_env_start_time = time.time()
+
+        #环境初始化
         state, step_time, list_need = self.env.reset()
         reset_env_time = time.time() - reset_env_start_time
         running_start_time = time.time()
+
+        #运行时间3600,也就是一个小时
         while step_time < self.dic_traffic_env_conf["RUN_COUNTS"]:
             step_start_time = time.time()
+
+            #agent只有一个
             for i in range(self.dic_traffic_env_conf["NUM_AGENTS"]):
+
+                #agent给出动作，这里的Agent是[<models.dynamiclight.DynamicLightAgent object at 0x71b881f5d5a0>]
                 phase_action, duration_action = self.agents[i].choose_action(state, list_need)
             # print(phase_action, duration_action)
+            #获得动作执行下一步仿真
             next_state, step_time, list_need = self.env.step(phase_action, duration_action)
 
             print("time: {0}, running_time: {1}".format(self.env.get_current_time(),
                                                         time.time()-step_start_time))
-
+            #刷新当前state
             state = next_state
 
         running_time = time.time() - running_start_time

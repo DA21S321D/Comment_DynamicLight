@@ -59,9 +59,11 @@ def main(in_args=None):
         traffic_file_list = ["anon_3_4_jinan_real.json", "anon_3_4_jinan_real_2000.json", "anon_3_4_jinan_real_2500.json"]
         num_rounds = 200
         template = "Jinan"
+        # 参数中默认传递的是这个地图
     elif args.newyork2:
         count, count2 = 3600, 3600
         road_net, num_lanes, num_lane = "28_7", [3, 3, 3, 3], 12
+        #phasemap是什么意思
         phase_map = [[1, 4], [7, 10], [0, 3], [6, 9]]
         traffic_file_list = ["anon_28_7_newyork_real_triple.json" , "anon_28_7_newyork_real_double.json"]
         num_rounds = 80
@@ -81,6 +83,7 @@ def main(in_args=None):
             "PHASE_MAP": phase_map,
             "NUM_LANE": num_lane,
             "NUM_ROUNDS": num_rounds,
+
             "NUM_GENERATORS": in_args.gen,
             "NUM_AGENTS": 1,
             "NUM_INTERSECTIONS": num_intersections,
@@ -162,6 +165,7 @@ def main(in_args=None):
                 4: [0, 0, 0, 1, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1]
             }
         else:
+            #缺少右转的相位，从N顺时针代表着每个lane的通行状态
             dic_traffic_env_conf_extra["PHASE"] = {
                 1: [0, 1, 0, 1, 0, 0, 0, 0],
                 2: [0, 0, 0, 0, 0, 1, 0, 1],
@@ -176,19 +180,27 @@ def main(in_args=None):
             }
 
         deploy_dic_agent_conf = getattr(config, "DIC_BASE_AGENT_CONF")
+        #基本的智能体配置和重写的智能体配置组合
         deploy_dic_traffic_env_conf = merge(config.dic_traffic_env_conf, dic_traffic_env_conf_extra)
         deploy_dic_path = merge(config.DIC_PATH, dic_path_extra)
+
+        #默认开启多线程
         if in_args.multi_process:
+
+            #pipeline_wrapper是第一个封装
             ppl = Process(target=pipeline_wrapper,
                           args=(deploy_dic_agent_conf,
                                 deploy_dic_traffic_env_conf,
                                 deploy_dic_path))
             process_list.append(ppl)
+
+
         else:
             pipeline_wrapper(dic_agent_conf=deploy_dic_agent_conf,
                              dic_traffic_env_conf=deploy_dic_traffic_env_conf,
                              dic_path=deploy_dic_path)
 
+    #处理多线程运行的操作
     if in_args.multi_process:
         for i in range(0, len(process_list), in_args.workers):
             i_max = min(len(process_list), i + in_args.workers)
